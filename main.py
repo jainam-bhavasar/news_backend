@@ -6,7 +6,6 @@ import os
 app = Flask(__name__)
 
 mongo_pass = os.environ.get("MONGO_PASS")
-print(mongo_pass)
 # MongoDB connection
 MONGO_URI = f"mongodb+srv://jainambhavsar95:{mongo_pass}@stocks.3zfgscg.mongodb.net/?retryWrites=true&w=majority&appName=stocks"
 client = MongoClient(MONGO_URI)
