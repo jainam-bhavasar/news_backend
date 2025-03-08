@@ -4,6 +4,7 @@ from pymongo import MongoClient
 from bson.json_util import dumps
 import os
 from google import genai
+from models.user_chat import UserChat, ChatMessage
 
 app = Flask(__name__)
 
@@ -13,6 +14,7 @@ MONGO_URI = f"mongodb+srv://jainambhavsar95:{mongo_pass}@stocks.3zfgscg.mongodb.
 client = MongoClient(MONGO_URI)
 db = client['news_articles']
 users_collection = db['users']
+user_chats_collection = db['user_chats']
 
 @app.route('/api/articles', methods=['GET'])
 def get_top_articles():
@@ -188,11 +190,8 @@ def chat_with_article():
             your response (only answer the question):
             """
             
-            # Create a GenerativeModel instance using the Google Generative AI SDK
-            genai_model = gemini_client.GenerativeModel(model)
-            
             # Generate the response with the correct format
-            response = genai_model.generate_content(conversation_prompt)
+            response = gemini_client.models.generate_content(contents= conversation_prompt,model=model)
             
             return jsonify({
                 'response': response.text,
@@ -202,6 +201,70 @@ def chat_with_article():
             'error': str(e)
         }), 500
 
+@app.route('/api/user-chat', methods=['GET'])
+def get_user_chat():
+    try:
+        user_id = request.args.get('userId')
+        news_id = request.args.get('newsId')
+
+        if not user_id or not news_id:
+            return jsonify({
+                'error': 'userId and newsId are required'
+            }), 400
+
+        # Find chat in MongoDB
+        chat_data = user_chats_collection.find_one({
+            'userId': user_id,
+            'newsId': int(news_id)
+        })
+
+        if not chat_data:
+            return '', 404
+
+        # Convert MongoDB document to UserChat model
+        chat = UserChat.from_mongo(chat_data)
+        return jsonify(chat.dict(by_alias=True))
+
+    except Exception as e:
+        return jsonify({
+            'error': str(e)
+        }), 500
+
+@app.route('/api/user-chat', methods=['POST'])
+def save_user_chat():
+    try:
+        chat_data = request.json
+        
+        # Validate input data using Pydantic model
+        chat = UserChat(**chat_data)
+        
+        # Convert to MongoDB format
+        mongo_data = chat.to_mongo()
+        
+        # Remove _id if it's empty (new chat)
+        if not mongo_data.get('_id'):
+            mongo_data.pop('_id', None)
+
+        # Upsert the chat document
+        result = user_chats_collection.update_one(
+            {
+                'userId': chat_data['userId'],
+                'newsId': chat_data['newsId']
+            },
+            {'$set': mongo_data},
+            upsert=True
+        )
+
+        return jsonify({
+            'success': True,
+            'modified': result.modified_count > 0,
+            'upserted': result.upserted_id is not None
+        })
+
+    except Exception as e:
+        return jsonify({
+            'error': str(e)
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)
