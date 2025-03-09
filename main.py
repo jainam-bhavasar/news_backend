@@ -6,6 +6,7 @@ from bson.json_util import dumps
 import os
 from google import genai
 from models.user_chat import UserChat, ChatMessage
+from news_recommender import NewsRecommender
 from tracking_service import TrackingService
 
 app = Flask(__name__)
@@ -25,6 +26,7 @@ tracking_service = TrackingService(articles_collection)
 
 # Initialize Gemini client
 genai_client = genai.Client(api_key="AIzaSyCJpSC__LjrvsIuazWA2HfFiUURhT5QgRw")
+recommender = NewsRecommender(client)
 
 def get_embedding(text):
     """Generate embedding for given text using Gemini API"""
@@ -66,43 +68,36 @@ def perform_vector_search(query_text, num_results=5):
     results = list(articles_collection.aggregate(pipeline))
     return results
 
-@app.route('/api/articles', methods=['GET'])
-def get_top_articles():
-    """
-    API-1: Get top 50 articles for a given date
-    Query parameter: date (e.g., '7th_march_2025')
-    """
-    try:
-        date_param = request.args.get('date')
-        if not date_param:
-            return jsonify({"error": "Date parameter is required"}), 400
-        
-        
-        # Query articles for the specific date and sort by rank or newsId
-        try:
-            articles = list(articles_collection.find(
-                {"date": date_param},
-                {"embedding": 0}
-            ).sort("rank", 1).limit(50))
-            if len(articles) == 0:
-                # If rank doesn't exist, fall back to newsId
-                articles = list(articles_collection.find(
-                    {"date": date_param},
-                    {"embedding": 0}
-                ).sort("newsId", 1).limit(50))
-        except Exception:
-            articles = list(articles_collection.find(
-                {"date": date_param},
-                {"embedding": 0}
-            ).sort("newsId", 1).limit(50))
-        
-        if not articles:
-            return jsonify({"error": f"No articles found for date {date_param}"}), 404
-            
-        return dumps(articles), 200
+@app.route('/api/articles', methods=['POST'])
+def get_feed():
+    """Unified endpoint for getting article feed (initial or continuous)"""
+    data = request.json
+    user_id = data.get('userId')
+    date = data.get('date')  # Expected format: "DD-MM-YYYY"
+    excluded_article_ids = data.get('excluded_article_ids', [])
+    count = data.get('count', 18)
+
     
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+    if not date:
+        return jsonify({"error": "date is required"}), 400
+    
+    # # Determine if this is initial feed or follow-up
+    is_initial_feed = len(excluded_article_ids) == 0
+    
+    recommendations = recommender.get_recommendations(
+        user_id=user_id,
+        date=date,
+        excluded_article_ids=excluded_article_ids,
+        count=count,
+        is_initial_feed=is_initial_feed
+    )
+
+
+    return dumps(recommendations), 200    
+
+
 
 @app.route('/api/article', methods=['GET'])
 def get_article():
