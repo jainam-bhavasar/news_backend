@@ -17,6 +17,7 @@ db = client['news_articles']
 articles_collection = db['all_articles']
 users_collection = db['users']
 user_chats_collection = db['user_chats']
+impressions_collection = db['impressions'] # New collection for impressions
 
 # Initialize Gemini client
 genai_client = genai.Client(api_key="AIzaSyCJpSC__LjrvsIuazWA2HfFiUURhT5QgRw")
@@ -432,6 +433,32 @@ def get_related_articles():
         return dumps(results), 200
 
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# New API endpoint for handling impressions
+@app.route('/api/impression', methods=['POST'])
+def track_impression():
+    """Store an impression event in the database."""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['userId', 'articleId', 'impressionType', 'viewTimeInSeconds', 'timeStamp']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+        
+        # Convert timestamp string to datetime object
+        if isinstance(data['timeStamp'], str):
+            data['timeStamp'] = datetime.fromisoformat(data['timeStamp'].replace('Z', '+00:00'))
+        
+        # Insert the impression into the database
+        result = impressions_collection.insert_one(data)
+        
+        return jsonify({"success": True, "id": str(result.inserted_id)}), 200
+    
+    except Exception as e:
+        print(f"Error tracking impression: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
