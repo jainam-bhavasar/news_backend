@@ -18,6 +18,49 @@ articles_collection = db['all_articles']
 users_collection = db['users']
 user_chats_collection = db['user_chats']
 
+# Initialize Gemini client
+genai_client = genai.Client(api_key="AIzaSyCJpSC__LjrvsIuazWA2HfFiUURhT5QgRw")
+
+def get_embedding(text):
+    """Generate embedding for given text using Gemini API"""
+    try:
+        result = genai_client.models.embed_content(
+            model="text-embedding-004",
+            contents=text
+        )
+        # Convert ContentEmbedding object to a regular list
+        return result.embeddings[0].values  # Get the first embedding's values as a list
+    except Exception as e:
+        print(f"Error generating embedding: {e}")
+        return None
+
+def perform_vector_search(query_text, num_results=5):
+    """Perform vector search on articles collection."""
+    query_embedding = get_embedding(query_text)
+    if query_embedding is None:
+        raise Exception("Failed to generate embedding for search query")
+        
+    pipeline = [
+        {
+            "$vectorSearch": {
+                "index": "vectorSearch",
+                "queryVector": query_embedding,
+                "path": "embedding",
+                "numCandidates": 10,
+                "limit": num_results,
+            }
+        },
+        {
+            "$project": {
+                "_id": 1,
+                "embedding": 0,
+                "score": {"$meta": "vectorSearchScore"}
+            }
+        }
+    ]
+    results = list(articles_collection.aggregate(pipeline))
+    return results
+
 @app.route('/api/articles', methods=['GET'])
 def get_top_articles():
     """
@@ -32,12 +75,21 @@ def get_top_articles():
         
         # Query articles for the specific date and sort by rank or newsId
         try:
-            articles = list(articles_collection.find({"date": date_param}).sort("rank", 1).limit(50))
+            articles = list(articles_collection.find(
+                {"date": date_param},
+                {"embedding": 0}
+            ).sort("rank", 1).limit(50))
             if len(articles) == 0:
                 # If rank doesn't exist, fall back to newsId
-                articles = list(articles_collection.find({"date": date_param}).sort("newsId", 1).limit(50))
+                articles = list(articles_collection.find(
+                    {"date": date_param},
+                    {"embedding": 0}
+                ).sort("newsId", 1).limit(50))
         except Exception:
-            articles = list(articles_collection.find({"date": date_param}).sort("newsId", 1).limit(50))
+            articles = list(articles_collection.find(
+                {"date": date_param},
+                {"embedding": 0}
+            ).sort("newsId", 1).limit(50))
         
         if not articles:
             return jsonify({"error": f"No articles found for date {date_param}"}), 404
@@ -299,6 +351,27 @@ def get_chat_history():
         return jsonify({
             'error': str(e)
         }), 500
+
+@app.route('/api/vector-search', methods=['GET'])
+def search_articles():
+    """
+    API endpoint for semantic vector search of articles
+    Query parameters:
+    - query: Search query text
+    - limit: Number of results to return (default: 5)
+    """
+    try:
+        query = request.args.get('query')
+        limit = int(request.args.get('limit', 5))
+
+        if not query:
+            return jsonify({"error": "Query parameter is required"}), 400
+
+        results = perform_vector_search(query, limit)
+        return dumps(results), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)
