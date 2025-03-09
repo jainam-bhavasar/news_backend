@@ -373,5 +373,66 @@ def search_articles():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/related-articles', methods=['GET'])
+def get_related_articles():
+    """
+    API endpoint to fetch related articles based on vector similarity
+    Query parameters:
+    - id: MongoDB document ID of the source article
+    - limit: Number of related articles to return (default: 5)
+    """
+    try:
+        article_id = request.args.get('id')
+        limit = int(request.args.get('limit', 5))
+
+        if not article_id:
+            return jsonify({"error": "Article ID parameter is required"}), 400
+
+        # Get the source article
+        try:
+            source_article = articles_collection.find_one({"_id": ObjectId(article_id)})
+        except Exception:
+            return jsonify({"error": "Invalid article ID format"}), 400
+
+        if not source_article:
+            return jsonify({"error": f"Article with ID {article_id} not found"}), 404
+
+        # Get the embedding from the source article
+        source_embedding = source_article.get('embedding')
+        if not source_embedding:
+            return jsonify({"error": "Source article does not have an embedding"}), 400
+
+        # Perform vector search using the source article's embedding
+        pipeline = [
+            {
+                "$vectorSearch": {
+                    "index": "vectorSearch",
+                    "queryVector": source_embedding,
+                    "path": "embedding",
+                    "numCandidates": 10,
+                    "limit": limit + 1,  # Add 1 to account for the source article
+                }
+            },
+            {
+                "$match": {
+                    "_id": {"$ne": ObjectId(article_id)}  # Exclude the source article
+                }
+            },
+            {
+                "$limit": limit
+            },
+            {
+                "$project": {
+                    "embedding": 0  # Exclude embedding from results
+                }
+            }
+        ]
+        
+        results = list(articles_collection.aggregate(pipeline))
+        return dumps(results), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)
