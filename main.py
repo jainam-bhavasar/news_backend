@@ -1,4 +1,5 @@
 from datetime import datetime
+from bson import ObjectId
 from flask import Flask, request, jsonify
 from pymongo import MongoClient
 from bson.json_util import dumps
@@ -13,6 +14,7 @@ mongo_pass = os.environ.get("MONGO_PASS")
 MONGO_URI = f"mongodb+srv://jainambhavsar95:{mongo_pass}@stocks.3zfgscg.mongodb.net/?retryWrites=true&w=majority&appName=stocks"
 client = MongoClient(MONGO_URI)
 db = client['news_articles']
+articles_collection = db['all_articles']
 users_collection = db['users']
 user_chats_collection = db['user_chats']
 
@@ -27,16 +29,15 @@ def get_top_articles():
         if not date_param:
             return jsonify({"error": "Date parameter is required"}), 400
         
-        collection = db['all_articles']
         
         # Query articles for the specific date and sort by rank or newsId
         try:
-            articles = list(collection.find({"date": date_param}).sort("rank", 1).limit(50))
+            articles = list(articles_collection.find({"date": date_param}).sort("rank", 1).limit(50))
             if len(articles) == 0:
                 # If rank doesn't exist, fall back to newsId
-                articles = list(collection.find({"date": date_param}).sort("newsId", 1).limit(50))
+                articles = list(articles_collection.find({"date": date_param}).sort("newsId", 1).limit(50))
         except Exception:
-            articles = list(collection.find({"date": date_param}).sort("newsId", 1).limit(50))
+            articles = list(articles_collection.find({"date": date_param}).sort("newsId", 1).limit(50))
         
         if not articles:
             return jsonify({"error": f"No articles found for date {date_param}"}), 404
@@ -58,11 +59,9 @@ def get_article():
         if not doc_id:
             return jsonify({"error": "Document ID parameter is required"}), 400
         
-        collection = db['all_articles']
-        
         try:
             from bson.objectid import ObjectId
-            article = collection.find_one({"_id": ObjectId(doc_id)})
+            article = articles_collection.find_one({"_id": ObjectId(doc_id)})
         except Exception:
             return jsonify({"error": "Invalid document ID format"}), 400
             
@@ -171,6 +170,7 @@ def chat_with_article():
             
             conversation_prompt = f"""
             You are a helpful AI assistant that helps users understand news articles.
+            If they are curious and want to know more about other things , then don't hesitate to answer.
             
             Article: {article_content}
             
@@ -265,6 +265,35 @@ def save_user_chat():
             'modified': result.modified_count > 0,
             'upserted': result.upserted_id is not None
         })
+
+    except Exception as e:
+        return jsonify({
+            'error': str(e)
+        }), 500
+@app.route('/api/chat-history', methods=['GET'])
+def get_chat_history():
+    try:
+        user_id = request.args.get('userId')
+        if not user_id:
+            return jsonify({
+                'error': 'userId is required'
+            }), 400
+
+        # Get all chats for this user, sorted by createdAt in descending order
+        chat_history = list(user_chats_collection.find({'userId': user_id}))
+        if not chat_history:
+            return jsonify([]), 200
+
+        # Get all article IDs from chat history
+        article_ids = [ObjectId(chat['articleId']) for chat in chat_history]
+       
+        # Get all articles in one query
+        articles = list(articles_collection.find({
+            '_id': {'$in': article_ids}
+        }))
+    
+        print("found articles",len(articles))
+        return dumps(articles), 200
 
     except Exception as e:
         return jsonify({

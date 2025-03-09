@@ -10,6 +10,7 @@ class UserChat(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     userId: str
     articleId: str
+    createdAt: str
     messages: List[ChatMessage]
 
     class Config:
