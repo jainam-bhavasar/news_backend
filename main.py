@@ -6,6 +6,7 @@ from bson.json_util import dumps
 import os
 from google import genai
 from models.user_chat import UserChat, ChatMessage
+from tracking_service import TrackingService
 
 app = Flask(__name__)
 
@@ -17,7 +18,10 @@ db = client['news_articles']
 articles_collection = db['all_articles']
 users_collection = db['users']
 user_chats_collection = db['user_chats']
-impressions_collection = db['impressions'] # New collection for impressions
+impressions_collection = db['impressions']
+
+# Initialize services
+tracking_service = TrackingService(articles_collection)
 
 # Initialize Gemini client
 genai_client = genai.Client(api_key="AIzaSyCJpSC__LjrvsIuazWA2HfFiUURhT5QgRw")
@@ -435,7 +439,6 @@ def get_related_articles():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# New API endpoint for handling impressions
 @app.route('/api/impression', methods=['POST'])
 def track_impression():
     """Store an impression event in the database."""
@@ -451,11 +454,24 @@ def track_impression():
         # Convert timestamp string to datetime object
         if isinstance(data['timeStamp'], str):
             data['timeStamp'] = datetime.fromisoformat(data['timeStamp'].replace('Z', '+00:00'))
+            
+        # Calculate interaction strength for article reads
+        interaction_strength = 0.0
+        if data['impressionType'] == 'ARTICLE_READ':
+            interaction_strength = tracking_service.calculate_interaction_strength(
+                article_id=data['articleId'],
+                view_time_seconds=data['viewTimeInSeconds']
+            )
+            data['interactionStrength'] = interaction_strength
         
         # Insert the impression into the database
         result = impressions_collection.insert_one(data)
         
-        return jsonify({"success": True, "id": str(result.inserted_id)}), 200
+        return jsonify({
+            "success": True, 
+            "id": str(result.inserted_id),
+            "interactionStrength": interaction_strength
+        }), 200
     
     except Exception as e:
         print(f"Error tracking impression: {e}")
