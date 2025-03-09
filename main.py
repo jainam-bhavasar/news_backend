@@ -27,23 +27,20 @@ def get_top_articles():
         if not date_param:
             return jsonify({"error": "Date parameter is required"}), 400
         
-        collection_name = f"news_{date_param}"
+        collection = db['all_articles']
         
-        # Check if collection exists
-        if collection_name not in db.list_collection_names():
-            return jsonify({"error": f"No articles found for date {date_param}"}), 404
-        
-        collection = db[collection_name]
-        
-        # Try to sort by rank if it exists, otherwise use newsId
+        # Query articles for the specific date and sort by rank or newsId
         try:
-            articles = list(collection.find().sort("rank", 1).limit(50))
-            if len(articles) == 0 and collection.count_documents({}) > 0:
+            articles = list(collection.find({"date": date_param}).sort("rank", 1).limit(50))
+            if len(articles) == 0:
                 # If rank doesn't exist, fall back to newsId
-                articles = list(collection.find().sort("newsId", 1).limit(50))
+                articles = list(collection.find({"date": date_param}).sort("newsId", 1).limit(50))
         except Exception:
-            articles = list(collection.find().sort("newsId", 1).limit(50))
+            articles = list(collection.find({"date": date_param}).sort("newsId", 1).limit(50))
         
+        if not articles:
+            return jsonify({"error": f"No articles found for date {date_param}"}), 404
+            
         return dumps(articles), 200
     
     except Exception as e:
@@ -52,31 +49,25 @@ def get_top_articles():
 @app.route('/api/article', methods=['GET'])
 def get_article():
     """
-    API-2: Get a specific article by date and newsId
-    Query parameters: date (e.g., '7th_march_2025') and newsId
+    API-2: Get a specific article by document ID
+    Query parameter: id (MongoDB document _id)
     """
     try:
-        date_param = request.args.get('date')
-        news_id = request.args.get('newsId')
+        doc_id = request.args.get('id')
         
-        if not date_param or not news_id:
-            return jsonify({"error": "Both date and newsId parameters are required"}), 400
+        if not doc_id:
+            return jsonify({"error": "Document ID parameter is required"}), 400
+        
+        collection = db['all_articles']
         
         try:
-            news_id = int(news_id)
-        except ValueError:
-            return jsonify({"error": "newsId must be an integer"}), 400
-        
-        collection_name = f"news_{date_param}"
-        
-        if collection_name not in db.list_collection_names():
-            return jsonify({"error": f"No articles found for date {date_param}"}), 404
-        
-        collection = db[collection_name]
-        article = collection.find_one({"newsId": news_id})
-        
+            from bson.objectid import ObjectId
+            article = collection.find_one({"_id": ObjectId(doc_id)})
+        except Exception:
+            return jsonify({"error": "Invalid document ID format"}), 400
+            
         if not article:
-            return jsonify({"error": f"Article with newsId {news_id} not found"}), 404
+            return jsonify({"error": f"Article with ID {doc_id} not found"}), 404
         
         return dumps(article), 200
     
@@ -205,9 +196,9 @@ def chat_with_article():
 def get_user_chat():
     try:
         user_id = request.args.get('userId')
-        news_id = request.args.get('newsId')
+        article_id = request.args.get('articleId')
 
-        if not user_id or not news_id:
+        if not user_id or not article_id:
             return jsonify({
                 'error': 'userId and newsId are required'
             }), 400
@@ -215,7 +206,7 @@ def get_user_chat():
         # Find chat in MongoDB
         chat_data = user_chats_collection.find_one({
             'userId': user_id,
-            'newsId': int(news_id)
+            'articleId': article_id,
         })
 
         if not chat_data:
@@ -235,6 +226,20 @@ def save_user_chat():
     try:
         chat_data = request.json
         
+        # Ensure required fields are present
+        if 'userId' not in chat_data:
+            return jsonify({
+                'error': 'userId is required'
+            }), 400
+            
+        if 'articleId' not in chat_data:
+            return jsonify({
+                'error': 'articleId is required'
+            }), 400
+            
+        if 'messages' not in chat_data:
+            chat_data['messages'] = []
+        
         # Validate input data using Pydantic model
         chat = UserChat(**chat_data)
         
@@ -249,7 +254,7 @@ def save_user_chat():
         result = user_chats_collection.update_one(
             {
                 'userId': chat_data['userId'],
-                'newsId': chat_data['newsId']
+                'articleId': chat_data['articleId']
             },
             {'$set': mongo_data},
             upsert=True
